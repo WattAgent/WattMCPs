@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # MQTT Broker
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    container_name: wattmcp-mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mqtt_data:/mosquitto/data
+      - mqtt_logs:/mosquitto/log
+    networks:
+      - wattmcp-network
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: wattmcp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - wattmcp-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  # MCP Server
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wattmcp-server
+    ports:
+      - "8000:8000"
+    environment:
+      - MQTT_BROKER=mqtt-broker
+      - REDIS_HOST=redis
+      - API_KEY=your_secret_api_key
+      - LOG_LEVEL=info
+    depends_on:
+      - mqtt-broker
+      - redis
+    networks:
+      - wattmcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Edge Client (for testing)
+  edge-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wattmcp-edge
+    environment:
+      - DEVICE_ID=mpsoc-01
+      - MQTT_BROKER=mqtt-broker
+      - MQTT_USERNAME=mpsoc-01
+      - MQTT_PASSWORD=supersecretpassword
+      - TELEMETRY_INTERVAL=2.0
+      - HW_LIB_PATH=/dev/null  # Simulate hardware
+    depends_on:
+      - mqtt-broker
+    networks:
+      - wattmcp-network
+    restart: unless-stopped
+    command: python src/mcp_client/mcp_client.py
+
+volumes:
+  mqtt_data:
+  mqtt_logs:
+  redis_data:
+
+networks:
+  wattmcp-network:
+    driver: bridge
